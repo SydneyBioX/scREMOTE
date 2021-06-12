@@ -1,0 +1,468 @@
+---
+title: "Processing input Matrices to scREMOTE"
+author: "Andy Tran"
+date: "21 October 2020"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{scClassify}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+knitr::opts_chunk$set(fig.width=8, fig.height=6) 
+```
+
+Choose initial parameters
+```{r}
+###################################################################
+######################### skin ####################################
+###################################################################
+library(Matrix)
+skin_atac <- readMM("skin/GSM4156597_skin.late.anagen.counts.txt.gz")
+dim(skin_atac)
+skin_barcodes <- read.delim("skin/GSM4156597_skin.late.anagen.barcodes.txt.gz",
+                            header = FALSE)
+dim(skin_barcodes)
+head(skin_barcodes)
+bed <- read.table("skin/GSM4156597_skin.late.anagen.peaks.bed.gz",
+                  header = FALSE, sep="\t", 
+                  stringsAsFactors=FALSE, quote="")
+peak_names <- paste0(bed$V1, ":",bed$V2, "-",bed$V3)
+rownames(skin_atac) <- peak_names
+colnames(skin_atac) <- skin_barcodes$V1
+saveRDS(skin_atac, file = "21-10-2020_skin_atac.rds")
+```
+
+```{r}
+ordered_bed <- bed %>% arrange(V1, V2)
+```
+
+
+```{r}
+skin_rna <- read.delim("skin/GSM4156608_skin.late.anagen.rna.counts.txt.gz",
+                       row.names = 1)
+dim(skin_rna)
+skin_rna <- as(as.matrix(skin_rna), "dgCMatrix")
+all(colnames(skin_rna) %in% colnames(skin_atac))
+all(colnames(skin_atac) %in% colnames(skin_rna))
+skin_rna <- skin_rna[, colnames(skin_atac)]
+dim(skin_rna)
+saveRDS(skin_rna, file = "21-10-2020_skin_rna.rds")
+```
+
+```{r}
+HiC <- read.delim("HiC_Mouse/4DGenome_MusMusculus_mm9.txt")
+HiC$AName <- paste0(HiC$InteractorAChr, ":",HiC$InteractorAStart, "-",HiC$InteractorAEnd)
+HiC$BName <- paste0(HiC$InteractorBChr, ":",HiC$InteractorBStart, "-",HiC$InteractorBEnd)
+```
+
+```{r, eval = FALSE}
+library(GenomicRanges)
+A_enhancers <- as(HiC$AName, "GRanges")
+B_enhancers <- as(HiC$BName, "GRanges")
+```
+
+HiC is often the big ones oops
+```{r}
+differences = HiC$InteractorAEnd - HiC$InteractorAStart
+which(HiC$Detection_Method == "Hi-C")
+```
+
+
+```{r}
+write.table(HiC$AName, "A_enhancers.bed", quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(HiC$BName, "B_enhancers.bed", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+Use LiftOver: http://genome.ucsc.edu/cgi-bin/hgLiftOver
+
+obtain errors
+```{r}
+A_bed_mm10 <- read.table("A_enhancers_mm10.bed")
+A_bed_mm10_err <- read.table("A_enhancers_mm10.err")
+
+B_bed_mm10 <- read.table("B_enhancers_mm10.bed")
+B_bed_mm10_err <- read.table("B_enhancers_mm10.err")
+
+error_inds_A <- which(HiC$AName %in% A_bed_mm10_err$V1)
+error_inds_B <- which(HiC$BName %in% B_bed_mm10_err$V1)
+error_inds <- union(error_inds_A, error_inds_B)
+```
+
+restrict HiC data to contain no errors
+
+```{r}
+HiC_filtered <- HiC[-error_inds,]
+write.table(HiC_filtered$AName, "A_enhancers_filtered.bed", quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(HiC_filtered$BName, "B_enhancers_filtered.bed", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+load in final bed files
+
+```{r}
+A_bed_mm10_filtered <- read.table("A_enhancers_mm10_filtered.bed")
+B_bed_mm10_filtered <- read.table("B_enhancers_mm10_filtered.bed")
+```
+
+only keep centre of CRE
+```{r}
+A_bed_mm10_filtered$chromosome <- sub(":.*","",A_bed_mm10_filtered$V1)
+A_bed_mm10_filtered$start <- as.integer(sub("-.*","",  sub("^.*:","",A_bed_mm10_filtered$V1)))
+A_bed_mm10_filtered$end <- as.integer(sub("^.*-","",A_bed_mm10_filtered$V1))
+A_bed_mm10_filtered$centre <- round((A_bed_mm10_filtered$start+A_bed_mm10_filtered$end)/2)
+
+B_bed_mm10_filtered$chromosome <- sub(":.*","",B_bed_mm10_filtered$V1)
+B_bed_mm10_filtered$start <- as.integer(sub("-.*","",  sub("^.*:","",B_bed_mm10_filtered$V1)))
+B_bed_mm10_filtered$end <- as.integer(sub("^.*-","",B_bed_mm10_filtered$V1))
+B_bed_mm10_filtered$centre <- round((B_bed_mm10_filtered$start+B_bed_mm10_filtered$end)/2)
+```
+
+get gene coordinates
+```{r}
+gene_coords_list <- read.delim("MGI_Gene_Model_Coord.rpt", row.names = NULL, sep = "\t", check.names = FALSE)
+column_names <- colnames(gene_coords_list)[-1]
+gene_coords_list <- gene_coords_list[,-16]
+colnames(gene_coords_list) <- column_names
+```
+
+filter down to genes in skin_rna
+```{r}
+library(tidyverse)
+skin_rna <- readRDS("21-10-2020_skin_rna.rds")
+dim(skin_rna)
+head(rownames(skin_rna))
+
+non_null_genes <- gene_coords_list$`3. marker symbol`[gene_coords_list$`8. NCBI gene start` != "null"]
+keep_genes <- intersect(rownames(skin_rna), non_null_genes)
+
+skin_rna_filtered <- skin_rna[keep_genes,]
+gene_coords_list_filtered <- filter(gene_coords_list, `3. marker symbol` %in% keep_genes)
+
+
+gene_coords_list_filtered <- gene_coords_list_filtered %>% 
+  select(gene = `3. marker symbol`, 
+         chromosome = `7. NCBI gene chromosome`, 
+         start = `8. NCBI gene start`, 
+         end = `9. NCBI gene end`)
+
+gene_coords_list_filtered <- gene_coords_list_filtered %>% 
+  mutate(chromosome = paste0("chr",chromosome),
+         start = as.integer(start),
+         end = as.integer(end))
+```
+
+only keep HiC interactions with a promoter region
+```{r}
+library(tictoc)
+HiC_regions <- data.frame(A_chr = A_bed_mm10_filtered$chromosome,
+                          A_centre = A_bed_mm10_filtered$centre,
+                          B_chr = B_bed_mm10_filtered$chromosome,
+                          B_centre = B_bed_mm10_filtered$centre)
+
+HiC_regions_keep <- data.frame(enh_chromosome= character(),enh_centre= integer(),gene = character())
+tic()
+for(i in 1:nrow(HiC_regions)){
+# for(i in 1:10000){
+ chrom_genes <- gene_coords_list_filtered %>% 
+    filter(chromosome == HiC_regions$A_chr[i])
+
+  # look at A enhancer first
+  potential_genes_A <- chrom_genes %>% filter(start + 500 > HiC_regions$A_centre[i]) %>%
+    filter(start - 500 < HiC_regions$A_centre[i])
+  if(nrow(potential_genes_A) > 0){
+    new_df <- data.frame(enh_chromosome = potential_genes_A$chromosome,
+                         enh_centre = HiC_regions$B_centre[i],
+                         gene = potential_genes_A$gene)
+    HiC_regions_keep <- rbind(HiC_regions_keep, new_df)
+  }
+  
+  # look at B enhancer
+  potential_genes_B <- chrom_genes %>% filter(start + 500 > HiC_regions$B_centre[i]) %>%
+    filter(start - 500 < HiC_regions$B_centre[i])
+  if(nrow(potential_genes_B) > 0){
+    new_df <- data.frame(enh_chromosome = potential_genes_B$chromosome,
+                         enh_centre = HiC_regions$A_centre[i],
+                         gene = potential_genes_B$gene)
+    HiC_regions_keep <- rbind(HiC_regions_keep, new_df)
+  }
+  
+  if(i %% 100000 == 0){
+    cat("completed", i, "calculations out of", nrow(HiC_regions),"\n")
+  }
+ }
+toc()
+saveRDS(HiC_regions_keep, "22-10-2020_Observed_Enh_Gene_interactions.rds")
+```
+
+
+```{r}
+library(dplyr)
+skin_atac <- readRDS("21-10-2020_skin_atac.rds")
+Enh_Gene_Int <- readRDS("22-10-2020_Observed_Enh_Gene_interactions.rds")
+Enh_Gene_Int <- arrange(Enh_Gene_Int, enh_chromosome, enh_centre) %>% unique()
+head(Enh_Gene_Int)
+```
+
+create enhancers, bins of size 1000
+
+```{r, warning=FALSE}
+chr_lengths <- Enh_Gene_Int %>% group_by(enh_chromosome) %>% summarise(max(enh_centre))
+chr_bins <- data.frame(chromosome = character(), start = integer(), end = integer())
+for(i in 1:nrow(chr_lengths)){
+  nbins <- ceiling(chr_lengths$`max(enh_centre)`/1000)
+  new_df <- data.frame(chromosome = rep(chr_lengths$enh_chromosome[i]), 
+                       start = (0:(nbins-1))*1000+1, 
+                       end = (1:nbins)*1000)
+  chr_bins <- rbind(chr_bins,new_df)
+}
+```
+
+count enhancers in each bin
+```{r}
+chr_bins$count = 0
+for(i in 1:nrow(Enh_Gene_Int)){
+#for(i in 1:1000){
+  ind <- max(which(chr_bins$start < Enh_Gene_Int$enh_centre[i] & chr_bins$chromosome == Enh_Gene_Int$enh_chromosome[i]))
+  chr_bins$count[ind] <- chr_bins$count[ind] + 1
+  if(i %% 10000 == 0){
+    cat("finished", i, "iterations out of", nrow(Enh_Gene_Int), "\n")
+  }
+}
+saveRDS(chr_bins,"27-10-2020_chr_bins.rds")
+```
+
+
+filter down to enhancers that actually contain centres. this is now our enhancer list
+```{r}
+chr_bins <- readRDS("27-10-2020_chr_bins.rds")
+chr_bins_used <- filter(chr_bins, count > 0)
+```
+
+build gene x enhancer C matrix
+```{r, warning = FALSE}
+enhancer_list <- paste0(chr_bins_used$chromosome, ":", chr_bins_used$start, "-",chr_bins_used$end)
+gene_list <- unique(Enh_Gene_Int$gene)
+
+n_genes <- length(gene_list)
+n_enhancers <- length(enhancer_list)
+
+C <- sparseMatrix(i = integer(0), j = integer(0), dims = c(n_genes,n_enhancers))
+rownames(C) <- gene_list
+colnames(C) <- enhancer_list
+
+for(i in 1:nrow(Enh_Gene_Int)){
+  enh_ind <- max(which(chr_bins_used$start < Enh_Gene_Int$enh_centre[i] & chr_bins_used$chromosome == Enh_Gene_Int$enh_chromosome[i]))
+  C[Enh_Gene_Int$gene[i],enh_ind] <- 1 # maybe change to make additive?
+  
+  if(i %% 10000 == 0){
+    cat("finished", i, "iterations out of", nrow(Enh_Gene_Int), "\n")    
+  }
+}
+
+saveRDS(C,"27-10-2020_c_init.rds")
+C <- readRDS("27-10-2020_c_init.rds")
+```
+
+filter down to interesting cells
+
+```{r}
+library(tidyverse)
+celltypes <- read_tsv("celltype.txt")
+keep_cells <- which(celltypes$celltype %in% c("Hair Shaft-cuticle.cortex", "IRS", "Medulla", "TAC-1", "TAC-2"))
+celltypes <- celltypes[keep_cells,]
+skin_atac <- skin_atac[,keep_cells]
+table(celltypes$celltype)
+```
+
+
+build A matrix, take all counts that overlap with bin
+```{r}
+### faster alternative, iterate over enhancers bins
+library(foreach)
+library(doParallel)
+library(tictoc)
+n_cells <- ncol(skin_atac)
+
+enhancer_list <- paste0(chr_bins_used$chromosome, ":", chr_bins_used$start, "-",chr_bins_used$end)
+gene_list <- unique(Enh_Gene_Int$gene)
+
+n_genes <- length(gene_list)
+n_enhancers <- length(enhancer_list)
+
+writeLines(c(""), "log.txt")
+registerDoParallel(20)  
+tic()
+A <- foreach(i = 1:n_enhancers , .combine = rbind) %dopar% {
+#A <- foreach(i = 1:5000 , .combine = rbind) %dopar% {  
+  cat(paste("Starting iteration",i, "out of", n_enhancers,"\n"), 
+       file="log.txt", append=TRUE)
+  
+  dna_peaks_ind <- which(bed$V1 == chr_bins_used$chromosome[i] & bed$V2 > chr_bins_used$start[i] - 300 & bed$V3 < chr_bins_used$end[i] + 300)
+  if(length(dna_peaks_ind) > 1){
+    colSums(skin_atac[dna_peaks_ind,])
+  } else if(length(dna_peaks_ind) == 1){
+      skin_atac[dna_peaks_ind,]
+    } 
+}
+toc()
+
+A <- Matrix(A, sparse = TRUE)
+rownames(A) <- enhancer_list
+colnames(A) <- colnames(skin_atac)
+
+saveRDS(A, "28-10-20_A_init.rds")
+```
+
+
+
+
+filter down to enhancers that are accessible at all
+
+```{r}
+A <- readRDS("28-10-20_A_init.rds")
+keep_enhancers <- which(rowSums(A) > 0)
+A_keep <- A[keep_enhancers,]
+enh_inds <- as.integer(unlist(lapply(rownames(A_keep), function(x) strsplit(x, ".", fixed = TRUE)[[1]][2])))
+
+C_keep <- C[,enh_inds]
+chr_bins_used_keep <- chr_bins_used[enh_inds,]
+enhancer_list_keep <- enhancer_list[enh_inds]
+
+n_enhancers_keep <- length(enh_inds)
+```
+
+output used bins as bed file
+```{r}
+chr_bins_used_keep$count <- NULL
+
+write.table(chr_bins_used_keep, file = "skin_enhancer_list_28-10-2020.bed", quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+```
+
+convert bed to fasta
+```{r}
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+enhancer_bed <- read.table("skin_enhancer_list_28-10-2020.bed", stringsAsFactors = FALSE)
+names(enhancer_bed) <- c("chromosome","start", "end")
+enhancers_fasta <- getSeq(Mmusculus, enhancer_bed$chromosome, enhancer_bed$start, enhancer_bed$end, as.character = FALSE)
+
+enhancer_names <- paste0(enhancer_bed$chromosome,":",enhancer_bed$start,"-",enhancer_bed$end)
+enhancers_fasta@ranges@NAMES <- enhancer_names
+
+writeXStringSet(enhancers_fasta, "enhancers_list_fasta.fa")
+```
+
+Use AME in MemeSuite
+
+convert PWM's into T matrix
+
+```{r}
+library(stringr)
+
+sequences <- read.table("AME_output/sequences.tsv", header = TRUE, stringsAsFactors = FALSE)
+
+datadir = "JASPAR_motif_ids/"
+fileNames <- list.files(datadir)
+
+motif_id_list = read.csv(file.path(datadir, fileNames[1]), header=TRUE, stringsAsFactors = FALSE)
+for(i in 2:length(fileNames)){
+  tempdata <- read.csv(file.path(datadir, fileNames[i]), header=TRUE, stringsAsFactors = FALSE)
+  motif_id_list <- rbind(motif_id_list, tempdata)
+}
+
+motif_names <- motif_id_list$Name
+names(motif_names) <- motif_id_list$ID
+
+sequences$tf_name <- str_to_title(motif_names[sequences$motif_ID])
+sequences$seq_ID <- sub("_.*","", sequences$seq_ID)
+```
+
+only keep true positives
+```{r}
+tf_list <- unique(sequences$tf_name)[which(unique(sequences$tf_name) %in% gene_list)]
+t <- length(tf_list)
+
+top_sequences <- sequences %>% 
+  group_by(seq_ID, tf_name) %>% 
+  arrange(desc(PWM_score)) %>% 
+  filter(row_number()==1) %>%
+  filter(class == "tp") %>%
+  arrange(tf_name) %>%
+  filter(tf_name %in% tf_list)
+```
+
+```{r}
+T_mat <- matrix(0, ncol = n_enhancers_keep, nrow = t)
+rownames(T_mat) <- tf_list
+colnames(T_mat) <- enhancer_list_keep
+
+for(i in 1:nrow(top_sequences)){
+  T_mat[top_sequences$tf_name[i],top_sequences$seq_ID[i]] <- top_sequences$PWM_score[i]
+}
+
+T_mat <- apply(T_mat,2, function(x) x/max(x))
+
+saveRDS(T_mat, "28-10-20_T.rds")
+```
+
+```{r}
+keep_genes <- which(rownames(skin_rna_filtered) %in% rownames(C_keep))
+skin_rna_filtered_keep <- skin_rna_filtered[keep_genes,keep_cells]
+```
+
+
+
+```{r}
+dim(T_mat)
+dim(A_keep)
+dim(C_keep)
+dim(skin_rna_filtered_keep)
+dim(celltypes)
+```
+
+```{r}
+saveRDS(T_mat, "Processed_matrices/T_processed_30-10-20.rds")
+saveRDS(A_keep, "Processed_matrices/A_processed_30-10-20.rds")
+saveRDS(C_keep, "Processed_matrices/C_processed_30-10-20.rds")
+saveRDS(skin_rna_filtered_keep, "Processed_matrices/E_processed_30-10-20.rds")
+saveRDS(celltypes, "Processed_matrices/celltypes_processed_30-10-20.rds")
+```
+
+
+
+
+
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+sce <- SingleCellExperiment(assay = list(counts = skin_rna))
+sce
+sce <- logNormCounts(sce)
+sce <- runPCA(sce)
+set.seed(2020)
+sce <- runUMAP(sce, dimred = "PCA")
+set.seed(2020)
+sce <- runTSNE(sce, dimred = "PCA")
+# skin_tfidf <- tfidf(skin_atac)
+# set.seed(2020)
+# num_pcs = 100
+# SVDtsne = irlba::irlba(skin_tfidf, num_pcs, num_pcs)
+# d_diagtsne = matrix(0, nrow=num_pcs, ncol=num_pcs)
+# diag(d_diagtsne) = SVDtsne$d
+# SVDtsne_vd = t(d_diagtsne %*% t(SVDtsne$v))
+# dim(SVDtsne_vd)
+# set.seed(2020)
+# tsnetfidf = Rtsne::Rtsne(SVDtsne_vd,pca=F)
+# reducedDim(sce, "TSNE_ATAC") <- tsnetfidf$Y
+# plotReducedDim(sce, "TSNE_ATAC")
+altExp(sce, "ATAC") <- SummarizedExperiment(list(counts = skin_atac))
+saveRDS(sce, file = "sce_SHAREseq_skin.rds")
+```
+

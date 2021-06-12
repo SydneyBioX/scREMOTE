@@ -1,0 +1,318 @@
+---
+title: "Generating scREMOTE Figures"
+author: "Andy Tran"
+date: "09 May 2021"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{scClassify}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+knitr::opts_chunk$set(fig.width=8, fig.height=6) 
+```
+
+
+# Import Necessary Packages
+
+```{r, include = FALSE}
+library(tidyverse)
+library(Matrix)
+library(glmnet)
+library(pheatmap)
+library(Rtsne)
+library(umap)
+library(scater)
+library(limma)
+library(gganimate)
+```
+
+Load Workspace Gata3 scREMOTE
+```{r}
+load("2021-05-27_scREMOTE_figs_Gata3.RData")
+```
+
+initial visualisation
+
+```{r, fig.width = 7, fig.height = 5}
+pca_coords <- data.frame(reducedDim(E_sce, "PCA"))
+pca_coords$cluster <- factor(cell_types$celltype, levels = c("HairShaft", "IRS", "TAC"))
+ggplot(pca_coords, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = cluster), size = 1.5) +
+  scale_color_manual(values = c("#6699FF" , "#009933", "#FF9900"))+  
+  theme_classic() + 
+  labs(color = "Cell Type")
+```
+
+```{r, fig.width = 7, fig.height = 5}
+library(viridis)
+pca_coords$size <- colSums(E)
+ggplot(pca_coords, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = size), size = 1.5) +
+  scale_color_viridis()+ 
+  theme_classic() + 
+  labs(color = "UMI Count")
+```
+
+```{r, fig.width = 7, fig.height = 5}
+ggplot(pca_coords, aes(x = PC2, y = PC3)) +
+  geom_point(aes(color = cluster), size = 1.5) +
+scale_color_manual(values = c("#6699FF" , "#009933", "#FF9900"))+ 
+  theme_classic() + 
+  labs(color = "Cell Type")
+```
+
+```{r, fig.width = 7, fig.height = 5}
+ggplot(pca_coords, aes(x = PC2, y = PC3)) +
+  geom_point(aes(color = size), size = 1.5) +
+  scale_color_viridis()+ 
+  theme_classic() + 
+  labs(color = "UMI Count")
+```
+
+```{r, fig.width = 5, fig.height = 5}
+ggplot(pca_coords, aes(x = PC2, y = PC3)) +
+  geom_point(aes(color = cluster), size = 1) +
+scale_color_manual(values = c("#6699FF" , "#009933", "#FF9900"))+ 
+  theme_classic() + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 1)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 4)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 8)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r}
+top_genes_IRS <- rownames(arrange(-diff.genes,t))[1:4]
+top_genes_IRS <-top_genes_IRS[c(1,2,4)]
+top_genes_HairShaft <- rownames(arrange(diff.genes,t))[1:3]
+
+top_genes <- c(top_genes_IRS,top_genes_HairShaft)
+filtered_all_E <- all_E %>% filter(gene %in% top_genes)
+
+ggplot(filtered_all_E,aes(x = time, y = mean_exp, color = factor(gene, levels = top_genes))) +
+  geom_line(size = 1) + 
+  geom_point() +
+   scale_color_manual(name = "Marker Genes", 
+                     values = c("#66CC33", "#006600", "#339933","#003399", "#0066CC", "#3399FF"), 
+                     labels = top_genes) +
+  xlab("Time Step") + 
+  ylab("Log Transformed Expression") + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, rep + 0.5)) + 
+  theme_classic() + 
+  theme(axis.text = element_text(size=11), 
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=11), 
+        legend.title = element_text(size=13))
+```
+
+```{r, fig.width = 8, fig.height = 7}
+pheatmap(cor(coefs[,-1]), cluster_rows = F, cluster_cols = F)
+```
+
+
+Load Workspace Runx1 scREMOTE
+```{r}
+load("2021-05-27_scREMOTE_figs_Runx1.RData")
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 1)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 4)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 8)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r}
+top_genes_IRS <- rownames(arrange(-diff.genes,t))[1:4]
+top_genes_IRS <-top_genes_IRS[c(1,2,4)]
+top_genes_HairShaft <- rownames(arrange(diff.genes,t))[1:3]
+
+top_genes <- c(top_genes_IRS,top_genes_HairShaft)
+filtered_all_E <- all_E %>% filter(gene %in% top_genes)
+
+ggplot(filtered_all_E,aes(x = time, y = mean_exp, color = factor(gene, levels = top_genes))) +
+  geom_line(size = 1) + 
+  geom_point() +
+   scale_color_manual(name = "Marker Genes", 
+                     values = c("#66CC33", "#006600", "#339933","#003399", "#0066CC", "#3399FF"), 
+                     labels = top_genes) +
+  xlab("Time Step") + 
+  ylab("Log Transformed Expression") + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, rep + 0.5)) + 
+  theme_classic() + 
+  theme(axis.text = element_text(size=11), 
+        axis.title = element_text(size=14),
+        legend.text = element_text(size=11), 
+        legend.title = element_text(size=13))
+```
+
+```{r, fig.width = 8, fig.height = 7}
+pheatmap(cor(coefs[,-1]), cluster_rows = F, cluster_cols = F)
+```
+
+Load Workspace Gata3 Coexpression
+```{r}
+load("2021-05-09_coexpression_figs_Gata3.RData")
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 1)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 4)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 8)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+Load Workspace Runx1 Coexpression
+```{r}
+load("2021-05-09_coexpression_figs_Runx1.RData")
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 1)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 4)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r, fig.width = 5, fig.height = 5}
+combined_pca_coords_temp <- filter(combined_pca_coords, time == 8)
+ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords_temp) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, shape = 19) +
+  theme_classic()  + 
+  theme(legend.position = "none", 
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size=14))
+```
+
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,237 @@
+---
+title: "Trying to use DC3"
+author: "Andy Tran"
+date: "10 July 2020"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{scClassify}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+knitr::opts_chunk$set(fig.width=8, fig.height=6) 
+```
+
+
+# Import Necessary Packages
+
+```{r, include = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(Matrix)
+library(pheatmap)
+library(tictoc)
+library(Rtsne)
+library(SingleCellExperiment)
+library(umap)
+library(scater)
+library(foreach)
+library(doParallel)
+```
+
+Read in data
+```{r}
+A <- readRDS("Processed_matrices/A_processed_30-10-20.rds")
+E <- readRDS("Processed_matrices/E_processed_30-10-20.rds")
+C <- readRDS("Processed_matrices/C_processed_30-10-20.rds")
+T_mat <- readRDS("Processed_matrices/T_processed_30-10-20.rds")
+cell_types <- readRDS("Processed_matrices/celltypes_processed_30-10-20.rds")
+
+E <- E[order(rownames(E)),]
+C <- C[order(rownames(C)),]
+
+
+rownames(A) <- colnames(C)
+```
+
+Set parameters
+```{r}
+P <- nrow(E)
+Q <- nrow(A)
+N <- ncol(E)
+N_tfs <- nrow(T_mat)
+table(cell_types$celltype)
+```
+
+Create H
+```{r}
+cell_type_names <- c("TAC-1", "TAC-2", "IRS", "Medulla", "Hair Shaft-cuticle.cortex")
+K <- length(cell_type_names)
+H <- matrix(nrow = N, ncol = K)
+
+for(i in 1:K){
+  H[,i] <- cell_types$celltype == cell_type_names[i]
+}
+H <- apply(H, 2,as.numeric)
+rownames(H) <- cell_types$bc
+colnames(H) <- cell_type_names
+```
+
+
+
+
+Set up SCE objects
+```{r}
+H_Dframe <- DataFrame(H)
+H_Dframe@listData <- lapply(H_Dframe@listData, factor)
+E_sce <- SingleCellExperiment(list(counts=E),
+    colData=cbind(DataFrame(label=factor(cell_types$celltype),barcode=colnames(E)),H_Dframe),
+    rowData=DataFrame(gene=rownames(E))
+)
+
+A_sce <- SingleCellExperiment(list(counts=A),
+    colData=cbind(DataFrame(label=factor(cell_types$celltype),barcode=colnames(A)),H_Dframe),
+    rowData=DataFrame(enhancer=rownames(A))
+)
+
+C_sce <- SingleCellExperiment(list(counts=C),
+    colData=cbind(DataFrame(enhancer=colnames(C))),
+    rowData=DataFrame(gene=rownames(C))
+)
+
+```
+
+Check cell quality in E
+```{r}
+per.cell <- perCellQCMetrics(E_sce)
+summary(per.cell$sum)
+summary(per.cell$detected)
+
+colData(E_sce) <- cbind(colData(E_sce), per.cell)
+#plotColData(E_sce, x = "sum", y="detected", colour_by="label") 
+```
+
+Check cell quality in A
+```{r}
+per.cell <- perCellQCMetrics(A_sce)
+summary(per.cell$sum)
+summary(per.cell$detected)
+
+colData(A_sce) <- cbind(colData(A_sce), per.cell)
+# plotColData(A_sce, x = "sum", y="detected", colour_by="label") 
+
+# keep_cell <- per.cell$detected >= 1
+# A_sce <- A_sce[,keep_cell]
+# E_sce <- E_sce[,keep_cell]
+# H <- H[keep_cell,]
+# embeddings <- embeddings[keep_cell,]
+
+dim(A_sce)
+dim(E_sce)
+```
+
+Check gene quality in E, remove genes expressed in <1% cells
+```{r}
+per.feat <- perFeatureQCMetrics(E_sce)
+summary(per.feat$mean)
+summary(per.feat$detected)
+summary(nexprs(E_sce, byrow=TRUE))
+
+keep_gene <- nexprs(E_sce, byrow=TRUE) >= N/100
+E_sce <- E_sce[keep_gene,]
+C_sce <- C_sce[keep_gene,]
+
+dim(E_sce)
+dim(C_sce)
+```
+
+Check Enhancer quality in C, remove enhancers that regulate 0 genes
+```{r}
+summary(nexprs(C_sce, byrow=FALSE))
+
+keep_enhancer <- nexprs(C_sce, byrow=FALSE) >= 1
+A_sce <- A_sce[keep_enhancer,]
+C_sce <- C_sce[,keep_enhancer]
+T_mat <- T_mat[,keep_enhancer]
+
+dim(A_sce)
+dim(C_sce)
+dim(T_mat)
+```
+
+Check enhancer quality in A, keep enhancers that are accessible in 1% of cells.
+```{r}
+per.feat <- perFeatureQCMetrics(A_sce)
+summary(per.feat$mean)
+summary(per.feat$detected)
+summary(nexprs(A_sce, byrow=TRUE))
+
+keep_enhancer <- nexprs(A_sce, byrow=TRUE) >= N/100
+A_sce <- A_sce[keep_enhancer,]
+C_sce <- C_sce[,keep_enhancer]
+T_mat <- T_mat[,keep_enhancer]
+
+dim(A_sce)
+dim(C_sce)
+dim(T_mat)
+```
+
+Check gene quality in C, DO NOT remove genes expressed regulated by 0 enhancers
+```{r}
+summary(nexprs(C_sce, byrow=TRUE))
+
+# keep_gene <- nexprs(C_sce, byrow=TRUE) >= 1
+# E_sce <- E_sce[keep_gene,]
+# C_sce <- C_sce[keep_gene,]
+
+dim(E_sce)
+dim(C_sce)
+```
+
+Final check
+```{r}
+summary(nexprs(E_sce, byrow=FALSE))
+summary(nexprs(A_sce, byrow=FALSE))
+summary(nexprs(C_sce, byrow=FALSE))
+summary(nexprs(E_sce, byrow=TRUE))
+summary(nexprs(A_sce, byrow=TRUE))
+summary(nexprs(C_sce, byrow=TRUE))
+```
+
+Only keep TFs that survive
+```{r}
+tf_ind <- which(rownames(T_mat) %in% rownames(E_sce))
+T_mat <- T_mat[tf_ind,]
+dim(T_mat)
+```
+
+Check dimensions
+```{r}
+dim(A_sce)
+dim(E_sce)
+dim(C_sce)
+dim(T_mat)
+```
+
+Check consistency
+```{r}
+identical(rownames(A_sce),colnames(C_sce))
+identical(rownames(A_sce),colnames(T_mat))
+identical(colnames(A_sce),colnames(E_sce))
+identical(rownames(E_sce),rownames(C_sce))
+```
+Convert back to matrices
+```{r}
+A <- assay(A_sce)
+E <- assay(E_sce)
+C <- assay(C_sce)
+```
+
+```{r}
+saveRDS(A, "Filtered_matrices/A_filtered_03-11-2020.rds")
+saveRDS(E, "Filtered_matrices/E_filtered_03-11-2020.rds")
+saveRDS(C, "Filtered_matrices/C_filtered_03-11-2020.rds")
+saveRDS(T_mat, "Filtered_matrices/T_filtered_03-11-2020.rds")
+saveRDS(H, "Filtered_matrices/H_filtered_03-11-2020.rds")
+```
+
+```{r}
+sessionInfo()
+```

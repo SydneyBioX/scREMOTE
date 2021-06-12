@@ -1,0 +1,312 @@
+---
+title: "Generating scREMOTE Figures"
+author: "Andy Tran"
+date: "09 May 2021"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{scClassify}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+knitr::opts_chunk$set(fig.width=8, fig.height=6) 
+```
+
+
+# Import Necessary Packages
+
+```{r, include = FALSE}
+library(tidyverse)
+library(Matrix)
+library(glmnet)
+library(pheatmap)
+library(Rtsne)
+library(umap)
+library(scater)
+library(limma)
+library(gganimate)
+```
+
+Read in data
+```{r}
+datadir <- "Filtered_matrices/"
+
+A <- readRDS(file.path(datadir, "A_further_filtered_04-11-2020.rds"))
+H <- readRDS(file.path(datadir, "H_further_filtered_04-11-2020.rds"))
+E <- readRDS(file.path(datadir, "E_further_filtered_04-11-2020.rds"))
+C <- readRDS(file.path(datadir, "C_further_filtered_04-11-2020.rds"))
+T_mat <- readRDS(file.path(datadir, "T_further_filtered_04-11-2020.rds"))
+cell_types <- readRDS("Processed_matrices/celltypes_processed_30-10-20.rds")
+R <- readRDS(file.path(datadir, "B_full_24-11-2020.rds"))
+```
+
+```{r}
+# Set parameters
+tf <- "Gata3"
+
+# Set dimensions
+P <- nrow(E) # genes
+Q <- nrow(A) # enhancers
+N <- nrow(H) # cells
+K <- ncol(H) # clusters
+ntfs <- nrow(T_mat) # clusters
+
+table(cell_types$celltype)
+```
+
+Subsample all cell types to number of IRS
+
+```{r}
+nIRS <- sum(H[,3] == 1)
+
+set.seed(2021)
+TAC_ind <- which(H[,1] + H[,2] == 1)
+IRS_ind <- which(H[,3] == 1)
+HairShaft_ind <- which(H[,5] == 1)
+keep_cells <- c(sample(TAC_ind, nIRS), IRS_ind ,sample(HairShaft_ind, nIRS))
+E <- E[,keep_cells]
+A <- A[,keep_cells]
+H <- H[keep_cells,]
+N <- nrow(H) # cells
+
+cell_types$celltype[TAC_ind] <- "TAC"
+cell_types$celltype[HairShaft_ind] <- "HairShaft"
+cell_types <- cell_types[keep_cells,]
+
+keep_TAC_bc <- colnames(E)[which(H[,1] + H[,2] == 1)]
+keep_TAC <- which(dimnames(R)[[3]] %in% keep_TAC_bc)
+R <- R[,,keep_TAC]
+```
+
+```{r}
+E_sce <- SingleCellExperiment(list(logcounts=E),
+    colData=cbind(DataFrame(label=factor(cell_types$celltype),barcode=colnames(E))),
+    rowData=DataFrame(gene=rownames(E))
+)
+
+E_sce <- runPCA(E_sce, ncomponents = 50, ntop = 1000)
+str(reducedDim(E_sce, "PCA"))
+
+rotation <- attr(reducedDim(E_sce, "PCA"),"rotation")
+rotation <- rotation[order(rownames(rotation)),]
+```
+
+initial visualisation
+
+```{r}
+pca_coords <- data.frame(reducedDim(E_sce, "PCA"))
+pca_coords$cluster <- factor(cell_types$celltype, levels = c("HairShaft", "IRS", "TAC"))
+ggplot(pca_coords, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = cluster), size = 1.5) +
+scale_color_manual(values = c("#6699FF" , "#009933", "#FF9900"))+  
+  theme_bw()
+```
+
+```{r}
+library(viridis)
+pca_coords$size <- colSums(E)
+ggplot(pca_coords, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = size), size = 1.5) +
+  scale_color_viridis()+
+  theme_bw()
+```
+
+```{r}
+ggplot(pca_coords, aes(x = PC2, y = PC3)) +
+  geom_point(aes(color = cluster), size = 1.5) +
+scale_color_manual(values = c("#6699FF" , "#009933", "#FF9900"))+  
+  theme_bw()
+```
+
+```{r}
+ggplot(pca_coords, aes(x = PC2, y = PC3)) +
+  geom_point(aes(color = size), size = 1.5) +
+  scale_color_viridis()+
+  theme_bw()
+```
+
+Top DE genes hair shaft vs IRS
+```{r, message = FALSE}
+E_sce_filter <- E_sce[,which(cell_types$celltype %in% c("HairShaft", "IRS"))]
+f <- as.character(E_sce_filter$label)
+f <- factor(f)
+
+design <- model.matrix(~ f)
+limma.fit <- lmFit(assay(E_sce_filter), design)
+limma.fit <- eBayes(limma.fit)
+diff.genes <- topTable(limma.fit, number = 50)
+```
+
+create coefficients
+```{r}
+#regression for only TACs with R
+E_TAC <- E[,which(H[,1] + H[,2] == 1)]
+w = 0.1
+
+gene_list <- rownames(E)
+tf_list <- rownames(T_mat)
+
+X <- as.matrix(t(E_TAC[gene_list %in% tf_list,]))
+
+
+coefs <- matrix(nrow = P, ncol = ntfs+1)
+
+for(i in 1:P){
+
+  Y <- E_TAC[i,]
+  if(gene_list[i] %in% tf_list){
+    X1 <- X * t(w * 1 + (1-w) * R[i,,])
+    X1[,gene_list[i]] <- 0
+    model <- lm(Y~X1)
+    model$coefficients[which(tf_list == gene_list[i])] <- 1
+  }
+  else{
+    X1 <- X * t(w * 1 + (1-w) * R[i,,])
+    model <- lm(Y~X1)
+  }
+  coefs[i,] <- model$coefficients
+}
+
+coefs[is.na(coefs)] <- 0
+rownames(coefs) <- rownames(E)
+colnames(coefs) <- c("int", rownames(T_mat))
+```
+
+cell reprogramming (always adding constant)
+```{r}
+set.seed(2)
+rep <- 15
+N_TAC <- sum(H[,1] + H[,2])
+TAC_cells <- which(H[,1] + H[,2]==1)
+tf_ind <- which(rownames(E) == tf)
+tf_inds <- which(rownames(E) %in% tf_list)
+
+combined_pca_coords <- data.frame(x = numeric(), y = numeric(), cluster = character(), time = numeric())
+## open nearby enhancers
+R_open <- R
+enhancer_targets <- which(T_mat[tf,]>0.2)
+gene_targets <- which(rowSums(C[,enhancer_targets])>0)
+
+R_open[gene_targets,tf,] <- R_open[gene_targets,tf,] + 1
+R_open[tf,tf,] <- R_open[tf,tf,] + 1
+shifted_E <- E[,TAC_cells]
+all_E <- data.frame(mean_exp = rowMeans(shifted_E))
+all_E$time <- 0
+all_E$gene <- rownames(all_E)
+    
+for(i in 1:rep){
+    shifted_E[tf_ind,] <- shifted_E[tf_ind,] + rnorm(N_TAC, 2.0, 0.0)  
+  
+    prev_E <- shifted_E
+    adjusted_prev_E <- prev_E[tf_inds,]
+    shifted_E <- apply(R_open,1,function(x) adjusted_prev_E  * (w * 1 + (1-w) * x)) %>% # weight according to regression
+      lapply(as.matrix) %>%
+       unlist %>%
+      array(dim=c(ntfs, N_TAC, P)) %>%
+      aperm(c(3,1,2)) %>%
+      apply(3,function(x) coefs[,-1] * x) %>% # weight by coefficients
+      array(dim = c(P, ntfs, N_TAC)) %>%
+      apply(c(1,3), sum) * 1 + coefs[,1]
+    
+    shift <- shifted_E - prev_E
+    shift[abs(shift) < 0.001] <- 0
+    shifted_E <- prev_E + shift/3
+    shifted_E[shifted_E < 0] <- 0
+
+  temp_E <- data.frame(mean_exp = rowMeans(shifted_E))
+  temp_E$time <- i
+  temp_E$gene <- rownames(temp_E)
+  all_E <- rbind(all_E,temp_E)
+  
+  
+  shifted_points_pca <- t(shifted_E) %*% rotation[,2:3]
+  shifted_points_pca <- data.frame(as.matrix(shifted_points_pca))
+  shifted_points_pca$cluster <- "intermediary"
+  shifted_points_pca$time <- i
+  
+  pca_coords <-  t(E) %*% rotation[,2:3]
+  pca_coords <- data.frame(as.matrix(pca_coords))
+  pca_coords$cluster <- cell_types$celltype
+  pca_coords$time <- i
+  
+  all_pca_coords <- rbind(pca_coords, shifted_points_pca)
+  combined_pca_coords <- rbind(combined_pca_coords, all_pca_coords)
+}
+
+p <- ggplot(aes(x = PC2, y = PC3),data = combined_pca_coords) +
+scale_color_manual(name = "Cell Types", values = c("#6699FF" , "#009933", "#FF9900","#333333"), labels = c("Hair Shaft", "IRS", "TAC","Reprogrammed"))+ 
+  geom_point(aes(color = factor(cluster, levels = c("HairShaft", "IRS", "TAC","intermediary"))), size = 1, alpha = 0.7) +
+  theme(legend.position = "none")+
+  theme_classic() + 
+  transition_time(time) +
+  labs(title = "Time Step: {frame_time}")
+p  
+
+# animate(p, nframes = 15, device = "png",
+#         renderer = file_renderer("~/results-2021-05-09/Runx1", prefix = "gganim_plot_Runx1", overwrite = TRUE))
+```
+
+```{r}
+top_genes_IRS <- rownames(arrange(-diff.genes,t))[1:4]
+top_genes_IRS <-top_genes_IRS[c(1,2,4)]
+top_genes_HairShaft <- rownames(arrange(diff.genes,t))[1:3]
+
+top_genes <- c(top_genes_IRS,top_genes_HairShaft)
+filtered_all_E <- all_E %>% filter(gene %in% top_genes)
+
+ggplot(filtered_all_E,aes(x = time, y = mean_exp, color = factor(gene, levels = top_genes))) +
+  geom_line(size = 1) + 
+  geom_point() +
+   scale_color_manual(name = "Genes", 
+                     values = c("#66CC33", "#33FF00", "#339900","#003399", "#0066CC", "#3399FF"), 
+                     labels = top_genes) +
+  xlab("Time Step") + 
+  ylab("Log Transformed Expression") + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, rep + 0.5)) + 
+  theme_classic() 
+```
+
+```{r}
+filtered_all_E <- all_E %>% filter(gene %in% top_genes_IRS)
+
+ggplot(filtered_all_E,aes(x = time, y = mean_exp, color = factor(gene, levels = top_genes_IRS))) +
+  geom_line(size = 1) + 
+  geom_point() +
+  scale_color_manual(name = "Genes",
+                    values = c("#66CC33", "#33FF00", "#339900"),
+                    labels = top_genes_IRS) +
+  xlab("Time Step") + 
+  ylab("Log Transformed Expression") + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, rep + 0.5)) + 
+  theme_classic() 
+
+filtered_all_E <- all_E %>% filter(gene %in% top_genes_HairShaft)
+
+ggplot(filtered_all_E,aes(x = time, y = mean_exp, color = factor(gene, levels = top_genes_HairShaft))) +
+  geom_line(size = 1) + 
+  geom_point() +
+  scale_color_manual(name = "Genes",
+                    values = c("#003399", "#0066CC", "#3399FF"),
+                    labels = top_genes_HairShaft) +
+  xlab("Time Step") + 
+  ylab("Log Transformed Expression") + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, rep + 0.5)) + 
+  theme_classic() 
+```
+
+```{r, fig.width = 10, fig.height = 4, eval = FALSE}
+save.image("2021-05-27_scREMOTE_figs_Gata3.RData")
+```
+
+
+```{r}
+library(beepr)
+beep()
+sessionInfo()
+```
