@@ -1,0 +1,10 @@
+This file contains the links to the data sources. Further information can be found in the Methods (Data) section on our manuscript: https://www.biorxiv.org/content/10.1101/2021.10.11.463798v1 
+
+Chromatin Conformation (4D Genome Browser)
+https://4dgenome.research.chop.edu/Download.html
+
+TF motifs (JASPAR)
+https://jaspar.genereg.net/downloads/
+
+scRNA-seq and scATAC-seq (Ma et al. (2020))
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE140203
