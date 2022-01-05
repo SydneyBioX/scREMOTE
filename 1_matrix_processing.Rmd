@@ -427,11 +427,11 @@ dim(celltypes)
 ```
 
 ```{r}
-saveRDS(T_mat, "Processed_matrices/T_processed_30-10-20.rds")
-saveRDS(A_keep, "Processed_matrices/A_processed_30-10-20.rds")
-saveRDS(C_keep, "Processed_matrices/C_processed_30-10-20.rds")
-saveRDS(skin_rna_filtered_keep, "Processed_matrices/E_processed_30-10-20.rds")
-saveRDS(celltypes, "Processed_matrices/celltypes_processed_30-10-20.rds")
+saveRDS(T_mat, "Processed_matrices/T_processed.rds")
+saveRDS(A_keep, "Processed_matrices/A_processed.rds")
+saveRDS(C_keep, "Processed_matrices/C_processed.rds")
+saveRDS(skin_rna_filtered_keep, "Processed_matrices/E_processed.rds")
+saveRDS(celltypes, "Processed_matrices/celltypes_processed.rds")
 ```
 
 

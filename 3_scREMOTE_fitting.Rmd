@@ -1,5 +1,5 @@
 ---
-title: "Generating scREMOTE Figures"
+title: "Fitting scREMOTE Model"
 author: "Andy Tran"
 date: "09 May 2021"
 output: rmarkdown::html_vignette
@@ -37,13 +37,13 @@ Read in data
 ```{r}
 datadir <- "Filtered_matrices/"
 
-A <- readRDS(file.path(datadir, "A_further_filtered_04-11-2020.rds"))
-H <- readRDS(file.path(datadir, "H_further_filtered_04-11-2020.rds"))
-E <- readRDS(file.path(datadir, "E_further_filtered_04-11-2020.rds"))
-C <- readRDS(file.path(datadir, "C_further_filtered_04-11-2020.rds"))
-T_mat <- readRDS(file.path(datadir, "T_further_filtered_04-11-2020.rds"))
-cell_types <- readRDS("Processed_matrices/celltypes_processed_30-10-20.rds")
-R <- readRDS(file.path(datadir, "B_full_24-11-2020.rds"))
+A <- readRDS(file.path(datadir, "A_filtered.rds"))
+H <- readRDS(file.path(datadir, "H_filtered.rds"))
+E <- readRDS(file.path(datadir, "E_filtered.rds"))
+C <- readRDS(file.path(datadir, "C_filtered.rds"))
+T_mat <- readRDS(file.path(datadir, "T_filtered.rds"))
+cell_types <- readRDS(file.path(datadir, "celltypes_filtered.rds"))
+R <- readRDS(file.path(datadir, "R_filtered.rds"))
 ```
 
 ```{r}

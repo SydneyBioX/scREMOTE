@@ -1,7 +1,7 @@
 ---
-title: "Trying to use DC3"
+title: "Filtering Processed matrices for scREMOTE"
 author: "Andy Tran"
-date: "10 July 2020"
+date: "21 October 2020"
 output: rmarkdown::html_vignette
 vignette: >
   %\VignetteIndexEntry{scClassify}
@@ -38,11 +38,11 @@ library(doParallel)
 
 Read in data
 ```{r}
-A <- readRDS("Processed_matrices/A_processed_30-10-20.rds")
-E <- readRDS("Processed_matrices/E_processed_30-10-20.rds")
-C <- readRDS("Processed_matrices/C_processed_30-10-20.rds")
-T_mat <- readRDS("Processed_matrices/T_processed_30-10-20.rds")
-cell_types <- readRDS("Processed_matrices/celltypes_processed_30-10-20.rds")
+A <- readRDS("Processed_matrices/A_processed.rds")
+E <- readRDS("Processed_matrices/E_processed.rds")
+C <- readRDS("Processed_matrices/C_processed.rds")
+T_mat <- readRDS("Processed_matrices/T_processed.rds")
+cell_types <- readRDS("Processed_matrices/celltypes_processed.rds")
 
 E <- E[order(rownames(E)),]
 C <- C[order(rownames(C)),]
@@ -225,11 +225,11 @@ C <- assay(C_sce)
 ```
 
 ```{r}
-saveRDS(A, "Filtered_matrices/A_filtered_03-11-2020.rds")
-saveRDS(E, "Filtered_matrices/E_filtered_03-11-2020.rds")
-saveRDS(C, "Filtered_matrices/C_filtered_03-11-2020.rds")
-saveRDS(T_mat, "Filtered_matrices/T_filtered_03-11-2020.rds")
-saveRDS(H, "Filtered_matrices/H_filtered_03-11-2020.rds")
+saveRDS(A, "Filtered_matrices/A_filtered.rds")
+saveRDS(E, "Filtered_matrices/E_filtered.rds")
+saveRDS(C, "Filtered_matrices/C_filtered.rds")
+saveRDS(T_mat, "Filtered_matrices/T_filtered.rds")
+saveRDS(H, "Filtered_matrices/H_filtered.rds")
 ```
 
 ```{r}
